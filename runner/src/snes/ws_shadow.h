@@ -16,6 +16,18 @@ enum {
 
 void WsShadowReset(void);
 
+/* Host opt-ins, independent of serialized SNES/cache state. Reapply before
+ * drawing. Zero preserves the pinned renderer for controlled A/B replay. */
+enum {
+  kWsShadowPixelBoundaries = 1u << 0,
+  kWsShadowLiveScroll = 1u << 1,
+};
+void WsShadowSetPresentationPolicy(unsigned policy);
+bool WsShadowPixelBoundariesEnabled(void);
+int WsShadowNativeLeft(int layer);
+int WsShadowNativeRight(int layer);
+int32_t WsShadowPresentWorldX(int layer, int screenX, uint16_t hScroll);
+
 /* Sparse host-presentation snapshot. Native SNES save states do not contain
  * the world-keyed margin cache, so reloading used to erase the exact history
  * that produced a live widescreen artifact. Games with a versioned extra

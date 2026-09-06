@@ -33,6 +33,10 @@ bool WsShadowLayerActive(int layer) {
     return false;
 }
 
+bool WsShadowPixelBoundariesEnabled(void) { return false; }
+int WsShadowNativeLeft(int layer) { (void)layer; return 0; }
+int WsShadowNativeRight(int layer) { (void)layer; return 256; }
+
 uint32_t WsShadowWorldX(int layer) {
     (void)layer;
     return 0;
@@ -457,7 +461,6 @@ int main(void) {
                           "unselected world OAM remains centered");
     }
 
-    ppu_free(ppu);
     if (failures) return 1;
 
     /* Mirror axis: reflect BG1 about screen columns -16 and 240 while the
@@ -532,6 +535,8 @@ int main(void) {
                           "mirror axes reset with the layer policies");
     }
 
+    ppu_free(ppu);
+    if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");
     return 0;
 }

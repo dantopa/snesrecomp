@@ -8,6 +8,17 @@
 
 enum { kLayers = 2 };
 
+static unsigned s_presentationPolicy;
+
+void WsShadowSetPresentationPolicy(unsigned policy) {
+  s_presentationPolicy = policy &
+      (kWsShadowPixelBoundaries | kWsShadowLiveScroll);
+}
+
+bool WsShadowPixelBoundariesEnabled(void) {
+  return (s_presentationPolicy & kWsShadowPixelBoundaries) != 0;
+}
+
 enum {
   kWsWestKeep = 12, /* ~192px; gutter + wide platforms */
   /* A 256px viewport covers 32 complete 8x8 tiles only when its fine X
@@ -246,8 +257,13 @@ static void RecordDebugProvenance(int layer, int screenX, int screenY,
   int x1 = x0 + pixelSpan;
   if (x0 < 0) x0 = 0;
   if (x1 > kPpuBufWidth) x1 = kPpuBufWidth;
-  for (int x = x0; x < x1; x++)
-    s_debugProvenance[layer][screenY][x] = source;
+  for (int x = x0; x < x1; x++) {
+    const int sx = x - kPpuExtraLeftRight;
+    const bool native = WsShadowPixelBoundariesEnabled() &&
+        sx >= WsShadowNativeLeft(layer) && sx < WsShadowNativeRight(layer);
+    s_debugProvenance[layer][screenY][x] =
+        native ? kWsShadowProvenanceNone : source;
+  }
 }
 
 static bool GetEntry(const WsShadowLayer *layer, uint32_t tx, uint32_t ty,
@@ -1074,6 +1090,36 @@ void WsShadowSetScroll(int layerIndex, uint32_t scrollX, uint32_t scrollY) {
   WsShadowLayer *layer = &s_layers[layerIndex];
   layer->scrollX = scrollX;
   layer->scrollY = scrollY;
+}
+
+int WsShadowNativeLeft(int layerIndex) {
+  return layerIndex >= 0 && layerIndex < kLayers
+             ? s_layers[layerIndex].nativeInsetLeft : 0;
+}
+
+int WsShadowNativeRight(int layerIndex) {
+  return layerIndex >= 0 && layerIndex < kLayers
+             ? 256 - s_layers[layerIndex].nativeInsetRight : 256;
+}
+
+int32_t WsShadowPresentWorldX(int layerIndex, int screenX,
+                              uint16_t hScroll) {
+  if (layerIndex < 0 || layerIndex >= kLayers)
+    return screenX;
+  const WsShadowLayer *layer = &s_layers[layerIndex];
+  int32_t delta = 0;
+  if (s_presentationPolicy & kWsShadowLiveScroll) {
+    /* DKC1 captures the unbiased cartridge viewport. Rendering adds the
+     * presentation bias to hScroll, while worldX already includes that bias.
+     * Subtract it from the live delta exactly once; leave scrollX unchanged
+     * because WsShadowFrame uses it to read the authentic VRAM columns. */
+    const uint32_t anchor = layer->scrollX + layer->worldX -
+                            layer->captureWorldX;
+    delta = (int32_t)(((uint32_t)hScroll - anchor) & 0x03ffu);
+    if (delta >= 0x0200)
+      delta -= 0x0400;
+  }
+  return (int32_t)layer->worldX + screenX + delta;
 }
 
 /* World y-tile for a map row, using the anchor's 32-row wrap window. */
@@ -2170,11 +2216,13 @@ uint16_t WsShadowTileDebug(int layerIndex, int screenX, int screenY,
   /*
    * The 8x8 background renderers call once per tile chunk. A hardware window
    * can make the final chunk start inside the native viewport but extend into
-   * the right margin (for example x=255..262). Treat that whole straddling
-   * chunk as world-keyed shadow data; returning the circular VRAM tile inserts
-   * an exact one-tile seam before margin rendering begins.
+   * the right margin (for example x=255..262). Return the shadow candidate;
+   * the pixel-boundary policy keeps the cartridge candidate for each native
+   * pixel. With that policy disabled, retain the historical whole-chunk A/B.
    */
-  const int tile_pixels = 1 << (layer->tileShift ? layer->tileShift : 3);
+  const int tile_pixels = WsShadowPixelBoundariesEnabled() && pixelSpan > 0
+                              ? pixelSpan
+                              : 1 << (layer->tileShift ? layer->tileShift : 3);
   const int native_left = layer->nativeInsetLeft;
   const int native_right = 256 - layer->nativeInsetRight;
   if (!layer->active ||
@@ -2193,7 +2241,7 @@ uint16_t WsShadowTileDebug(int layerIndex, int screenX, int screenY,
    * period inferred from a feature-free native window can no longer
    * paint filler over known feature cells. */
   const uint32_t shift = layer->tileShift ? layer->tileShift : 3;
-  int32_t worldX = (int32_t)layer->worldX + screenX;
+  int32_t worldX = WsShadowPresentWorldX(layerIndex, screenX, hScroll);
   int32_t worldY =
       layer->retainHistory
           ? (int32_t)(((wrappedY - layer->scrollY) & 0x3ff) +
