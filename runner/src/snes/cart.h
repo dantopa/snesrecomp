@@ -22,6 +22,9 @@ struct Cart {
 
   uint8_t* rom;
   uint32_t romSize;
+  /* Host-selected expanded HiROM data banks. Cartridge configuration, not
+   * mutable guest/save-state data; disabled again by cart_load. */
+  bool hiromLinearDataBanks;
   uint8_t* ram;
   uint32_t ramSize;
   const uint64_t* masterClock;
@@ -93,6 +96,31 @@ Cart* cart_init(Snes* snes);
 void cart_free(Cart* cart);
 void cart_reset(Cart* cart); // will reset special chips etc, general reading is set up in load
 void cart_load(Cart* cart, int type, uint8_t* rom, int romSize, int ramSize); // TODO: figure out how to handle (battery, cart-chips etc)
+/* Opt in only for a verified expanded image: $40-$7D address the additional
+ * linear data area; $80-$FF retain the original HiROM mirrors. This is not
+ * automatic ExHiROM header detection or a change to stock HiROM. */
+static inline void cart_set_hirom_linear_data_banks(Cart *cart, bool enabled) {
+  if (cart)
+    cart->hiromLinearDataBanks = enabled && cart->type == CART_HIROM &&
+                                cart->romSize > 0x400000u;
+}
+
+/* Shared by the CPU pointer path and cartridge/DMA bus reads. Keep this
+ * address translation separately testable with synthetic cartridge storage. */
+static inline uint8_t *cart_hirom_rom_ptr(Cart *cart, uint8_t bank,
+                                        uint16_t adr) {
+  if (!cart || !cart->rom || !cart->romSize || cart->type != CART_HIROM ||
+      bank == 0x7e || bank == 0x7f)
+    return NULL;
+  if (cart->hiromLinearDataBanks && bank >= 0x40 && bank < 0x7e) {
+    uint32_t off = ((uint32_t)bank << 16) | adr;
+    return off < cart->romSize ? &cart->rom[off] : NULL;
+  }
+  uint8_t canonical = bank & 0x7f;
+  if (adr < 0x8000 && canonical < 0x40) return NULL;
+  uint32_t off = ((uint32_t)(canonical & 0x3f) << 16) | adr;
+  return &cart->rom[off % cart->romSize];
+}
 uint8_t cart_read(Cart* cart, uint8_t bank, uint16_t adr);
 void cart_write(Cart* cart, uint8_t bank, uint16_t adr, uint8_t val);
 void cart_saveload(Cart *cart, SaveLoadInfo *sli);

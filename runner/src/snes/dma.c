@@ -269,7 +269,21 @@ bool dma_cycle(Dma* dma) {
   return false;
 }
 
+static int g_zero_size_vram_noop = 0;
+
+void dma_set_zero_size_vram_noop(int enabled) {
+  g_zero_size_vram_noop = enabled != 0;
+}
+
 void dma_startDma(Dma* dma, uint8_t val, bool hdma) {
+  if(g_zero_size_vram_noop && !hdma) {
+    for(int ch = 0; ch < 8; ch++) {
+      DmaChannel *c = &dma->channel[ch];
+      if((val & (1 << ch)) && !c->fromB && c->size == 0 &&
+         c->bAdr == 0x18 && c->aBank != 0x80)
+        val &= (uint8)~(1 << ch);  /* zero-size sprite-queue entry: no-op */
+    }
+  }
   for(int i = 0; i < 8; i++) {
     if(hdma) {
       dma->channel[i].hdmaActive = val & (1 << i);

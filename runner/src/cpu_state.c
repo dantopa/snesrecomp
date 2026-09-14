@@ -434,7 +434,23 @@ uint16 cpu_read16(CpuState *cpu, uint8 bank, uint16 addr) {
     return cpu_latch_read16(cpu, (uint16)p[0] | ((uint16)p[1] << 8));
 }
 
+/* Diagnostic tap (SNESRECOMP_DMAQ_ZERO_WATCH): report zero writes to the
+ * sprite-DMA queue size fields ($170F-$1719) with the current AOT
+ * function, for mod-bringup investigations. Inert unless enabled. */
+static int cpu_dmaq_watch_on(void) {
+  static int init = 0, on = 0;
+  if (!init) { const char *e = getenv("SNESRECOMP_DMAQ_ZERO_WATCH");
+             on = e && e[0] && e[0] != '0'; init = 1; }
+  return on;
+}
+static void cpu_dmaq_note_zero_write(uint16 addr) {
+  extern const char *g_last_recomp_func;
+  if (addr < 0x170fu || addr > 0x1719u) return;
+  fprintf(stderr, "[dmaq] zero write $%04x fn=%s\n", addr,
+          g_last_recomp_func ? g_last_recomp_func : "(none)");
+}
 void cpu_write8(CpuState *cpu, uint8 bank, uint16 addr, uint8 v) {
+    if (cpu_dmaq_watch_on() && v == 0) cpu_dmaq_note_zero_write(addr);
     if (g_snes && g_snes->cart)
         cart_note_cpu_bus(g_snes->cart, bank, addr);
     cpu->open_bus = v;
@@ -511,6 +527,7 @@ void cpu_write8(CpuState *cpu, uint8 bank, uint16 addr, uint8 v) {
 }
 
 void cpu_write16(CpuState *cpu, uint8 bank, uint16 addr, uint16 v) {
+    if (cpu_dmaq_watch_on() && v == 0) { cpu_dmaq_note_zero_write(addr); cpu_dmaq_note_zero_write((uint16)(addr + 1)); }
     if (g_snes && g_snes->cart)
         cart_note_cpu_bus(g_snes->cart, bank, addr);
     cpu->open_bus = (uint8)v;

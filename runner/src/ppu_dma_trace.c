@@ -100,10 +100,13 @@ void ppudma_record_dma(int channel, int fromB, uint8_t aBank, uint16_t aAdr,
   static int log_init = 0, log_on = 0;
   if (!log_init) { log_on = env_int("SNESRECOMP_DMA_LOG"); log_init = 1; }
   if (log_on) {
-    fprintf(stderr, "[dma] f%d ch%d %s src=%02X:%04X dst=$21%02X size=%u\n",
+    extern const char *g_dmatrace_trigger_fn;
+    fprintf(stderr,
+            "[dma] f%d ch%d %s src=%02X:%04X dst=$21%02X size=%u fn=%s\n",
             snes_frame_counter, channel, fromB ? "B->A" : "A->B",
             (unsigned)aBank, (unsigned)aAdr, (unsigned)bAdr,
-            (unsigned)(size ? size : 0x10000u));
+            (unsigned)(size ? size : 0x10000u),
+            g_dmatrace_trigger_fn ? g_dmatrace_trigger_fn : "");
   }
 }
 
