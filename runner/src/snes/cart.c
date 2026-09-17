@@ -69,6 +69,7 @@ void cart_load(Cart* cart, int type, uint8_t* rom, int romSize, int ramSize) {
   sa1_destroy(cart->sa1);
   cart->sa1 = NULL;
   cart->type = type;
+  cart->hiromLinearDataBanks = false;
   if(cart->rom != NULL) free(cart->rom);
   if(cart->ram != NULL) free(cart->ram);
   cart->rom = malloc(romSize);
@@ -156,10 +157,7 @@ uint8_t *cart_getRomPtr(Cart *cart, uint8_t bank, uint16_t adr) {
       break;
     }
     case CART_HIROM: {
-      uint8_t canonical = bank & 0x7f;
-      if (adr < 0x8000 && canonical < 0x40) return NULL;
-      off = ((uint32_t)(canonical & 0x3f) << 16) | adr;
-      break;
+      return cart_hirom_rom_ptr(cart, bank, adr);
     }
     case CART_CX4: {
       /* Cx4 carts are LoROM. The $6000-$7FFF window in banks $00-$3F/$80-$BF

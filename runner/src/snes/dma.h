@@ -53,6 +53,15 @@ void dma_write(Dma* dma, uint16_t adr, uint8_t val); // 43x0-43xf
 void dma_doDma(Dma* dma);
 bool dma_cycle(Dma* dma);
 void dma_startDma(Dma* dma, uint8_t val, bool hdma);
+
+/* When enabled, a general DMA to $2118 with a raw size of 0 (i.e. 65536
+ * bytes) from a cartridge bank other than $80 is treated as a no-op instead
+ * of stomping VRAM. The Dixie Kong Country mod's sprite-DMA queue emits
+ * zero-size entries that the hack author's emulator silently dropped; stock
+ * DKC1's only legitimate zero-size VRAM DMAs are the boot-bank ($80)
+ * uploads, which keep working. Default off; only the DKC1 Dixie variant
+ * host enables this. */
+void dma_set_zero_size_vram_noop(int enabled);
 void dma_saveload(Dma *dma, SaveLoadInfo *sli);
 
 #endif

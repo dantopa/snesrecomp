@@ -225,6 +225,10 @@ struct Ppu {
   // side of that axis. Bit L of wsMirrorAxisMask enables the pair for BG(L+1).
   uint8_t wsMirrorAxisMask;
   int16_t wsMirrorAxisLeft[4], wsMirrorAxisRight[4];
+  // Bit L copies native column 255 into that layer's right margin after any
+  // axis reflection, so a locked interior can continue its authored right
+  // edge without flipping the 4:3 picture.
+  uint8_t wsRightEdgeClampMask;
   // Optional scanline bands: clamp or cyclically repeat only [y0,y1).
   uint8_t wsClampY0[4], wsClampY1[4];
   uint8_t wsRepeatY0[4], wsRepeatY1[4];
@@ -589,6 +593,10 @@ void PpuSetWidescreenLayerRepeat(Ppu *ppu, uint8_t mask);
 // the other layer policies.
 void PpuSetWidescreenLayerMirrorAxis(Ppu *ppu, uint8_t layer, int left_axis,
                                      int right_axis);
+// After the axis-mirror merge, copy native column 255 across this layer's
+// right extra. The native 256 and left margin are untouched. Re-apply each
+// frame; reset with the other layer policies.
+void PpuSetWidescreenLayerRightEdgeClamp(Ppu *ppu, uint8_t layer, bool enable);
 
 // Apply clamp, cyclic-repeat, or stretch only on scanlines [y0,y1).
 // y1<=y0 disables. Repeat/stretch bands apply to Mode-1 4bpp and 2bpp

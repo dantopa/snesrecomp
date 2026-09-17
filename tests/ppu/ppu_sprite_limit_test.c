@@ -33,6 +33,10 @@ bool WsShadowLayerActive(int layer) {
     return false;
 }
 
+bool WsShadowPixelBoundariesEnabled(void) { return false; }
+int WsShadowNativeLeft(int layer) { (void)layer; return 0; }
+int WsShadowNativeRight(int layer) { (void)layer; return 256; }
+
 uint32_t WsShadowWorldX(int layer) {
     (void)layer;
     return 0;
@@ -457,7 +461,6 @@ int main(void) {
                           "unselected world OAM remains centered");
     }
 
-    ppu_free(ppu);
     if (failures) return 1;
 
     /* Mirror axis: reflect BG1 about screen columns -16 and 240 while the
@@ -516,6 +519,25 @@ int main(void) {
         failures += check(mirrored && kept,
                           "an inset axis reflects into the margin only");
 
+        /* Banana Hoard right opening: keep the left inset reflection and
+         * continue native column 255 instead of flipping the cave mouth. */
+        PpuSetExtraSpace(ppu, kWideExtra);
+        PpuSetWidescreenLayerMask(ppu, 0x01);
+        PpuSetWidescreenLayerMirrorAxis(ppu, 0, 8, 32767);
+        PpuSetWidescreenLayerRightEdgeClamp(ppu, 0, true);
+        ppu_runLine(ppu, 1);
+        mirrored = 1;
+        kept = 1;
+        int clamped = 1;
+        for (int x = -kWideExtra; x < 0; x++)
+            mirrored &= bg_pixel(ppu, x) == bg_pixel(ppu, 15 - x);
+        for (int x = 0; x < kPpuXPixels; x++)
+            kept &= (bg_pixel(ppu, x) & 0xff) == expected_color(x);
+        for (int x = kPpuXPixels; x < kPpuXPixels + kWideExtra; x++)
+            clamped &= bg_pixel(ppu, x) == bg_pixel(ppu, kPpuXPixels - 1);
+        failures += check(mirrored && kept && clamped,
+                          "right edge clamp continues the last native column");
+
         /* An axis beyond the rendered span leaves that side alone, and the
          * policy resets with the others when the border is reapplied. */
         PpuSetExtraSpace(ppu, kWideExtra);
@@ -532,6 +554,8 @@ int main(void) {
                           "mirror axes reset with the layer policies");
     }
 
+    ppu_free(ppu);
+    if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");
     return 0;
 }
