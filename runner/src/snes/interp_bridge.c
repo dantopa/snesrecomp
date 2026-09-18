@@ -276,6 +276,12 @@ static struct {
 } s_pre_opcode_hooks[kInterpPreOpcodeHookSlots];
 static int s_pre_opcode_hook_count;
 static int s_pre_opcode_redirect_valid;
+/* Interpreted opcodes since start-up (see interp_bridge_steps_total), and
+ * the same count split by program bank so a host can tell RAM-resident code
+ * from uncompiled ROM regions. */
+static unsigned long long s_interp_steps_total;
+static unsigned long long s_interp_bank_steps[256];
+static unsigned long long s_interp_page_steps[65536]; /* pc24 >> 8 */
 static uint32_t s_pre_opcode_redirect_pc24;
 
 void interp_bridge_set_pre_opcode_hook(uint32_t pc24,
@@ -728,7 +734,10 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     uint64_t progress_write_epoch=g_interp_bridge_write_epoch;
     uint64_t progress_dynamic_epoch=s_interp_dynamic_progress_epoch;
     for (; steps < step_cap; steps++) {
+        s_interp_steps_total++;  /* host telemetry: interpreted opcodes */
+        s_interp_bank_steps[in.k & 0xff]++;
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
+        s_interp_page_steps[(pc_before >> 8) & 0xffff]++;
 #if SNESRECOMP_REVERSE_DEBUG
         /* The reverse debugger must observe whichever execution tier owns the
          * next guest instruction. AOT blocks arrive through cpu_trace_block;
@@ -1547,6 +1556,21 @@ extern int snes_frame_counter;
 
 static long s_tier_hits = 0;
 long interp_tier_hit_count(void) { return s_tier_hits; }
+
+/* Interpreted opcodes since start-up. Hosts log the per-frame delta next to
+ * frame time so slow frames can be attributed to interpretation (RAM-
+ * resident or otherwise uncompiled code) rather than to presentation. */
+unsigned long long interp_bridge_steps_total(void) {
+  return s_interp_steps_total;
+}
+
+const unsigned long long *interp_bridge_bank_steps(void) {
+  return s_interp_bank_steps;
+}
+
+const unsigned long long *interp_bridge_page_steps(void) {
+  return s_interp_page_steps;
+}
 
 /* Aggregate tier-2 coverage stats for the interp_stats TCP command. */
 void interp_tier2_stats(int *sites, unsigned long long *clean,

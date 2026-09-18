@@ -127,6 +127,12 @@ int interp_bridge_resume_task(CpuState *cpu, uint32_t resume_pc24,
 /* Count of tier-downs taken this run (observability / tests / Phase-2
  * manifest). */
 long interp_tier_hit_count(void);
+/* Interpreted opcodes since start-up (monotonic; hosts log per-frame deltas),
+ * and the same count per program bank (256 entries). */
+unsigned long long interp_bridge_steps_total(void);
+const unsigned long long *interp_bridge_bank_steps(void);
+/* Per 256-byte page (index pc24 >> 8, 65536 entries). */
+const unsigned long long *interp_bridge_page_steps(void);
 void interp_tier2_stats(int *sites, unsigned long long *clean,
                         unsigned long long *bail);
 
