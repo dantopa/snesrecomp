@@ -61,10 +61,10 @@ void snes_free(Snes* snes) {
 
 /* RTLS v5 and earlier serialized beamMasterLast between vPos and
  * apuCatchupCycles (+8 bytes). v6+ keeps it host-only (before hPos). */
-static uint32_t s_saveload_version = 7;
+static uint32_t s_saveload_version = 8;
 
 void snes_saveload_set_version(uint32_t version) {
-  s_saveload_version = version ? version : 7;
+  s_saveload_version = version ? version : 8;
 }
 
 void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
@@ -105,6 +105,14 @@ void snes_saveload(Snes *snes, SaveLoadInfo *sli) {
     snes->joypadStrobe = false;
     snes->joypad1Index = snes->joypad2Index = 0;
     snes->joypad1Latched = snes->joypad2Latched = 0;
+  }
+  if (s_saveload_version >= 8) {
+    /* PPU port latches (vramPointer .. m7prev): an upload written through the
+     * ports can span frames (DKC2 decompresses level graphics straight into
+     * VRAM), so a save inside one must resume at the same address. */
+    enum { kPpuLatchBytes = 21 };
+    assert(offsetof(Ppu, m7prev) + 1 - offsetof(Ppu, vramPointer) == kPpuLatchBytes);
+    sli->func(sli, &snes->ppu->vramPointer, kPpuLatchBytes);
   }
 
   snes->cpu->e = 0;
