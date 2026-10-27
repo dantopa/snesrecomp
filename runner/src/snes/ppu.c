@@ -18,6 +18,7 @@ extern Snes *g_snes;
 static void PpuDrawWholeLine(Ppu *ppu, uint y);
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line);
+static bool PpuObjRemovedOnLine(Ppu *ppu, int screen_y);
 static uint16_t ppu_getVramRemap(Ppu* ppu);
 
 
@@ -484,6 +485,8 @@ void ppu_runLine(Ppu* ppu, int line) {
 
     // evaluate sprites
     ClearBackdrop(&ppu->objBuffer);
+    if (PpuObjRemovedOnLine(ppu, line - 1))
+      ClearBackdrop(&ppu->objSubBuffer);
     if (ppu->overlayRenderBuffer[kPpuOverlaySource_Obj])
       memset(&ppu->overlayBuffers[kPpuOverlaySource_Obj], 0,
              sizeof(ppu->overlayBuffers[kPpuOverlaySource_Obj]));
@@ -1921,9 +1924,22 @@ static void PpuDrawSprites(Ppu *ppu, uint y, uint sub, bool clear_backdrop) {
       continue;  // layer is disabled for this window part
     int left = win.edges[windex];
     int width = win.edges[windex + 1] - left;
-    PpuZbufType *src = ppu->objBuffer.data + left + kPpuExtraLeftRight;
+    const PpuZbufType *src = ppu->objBuffer.data + left + kPpuExtraLeftRight;
     PpuZbufType *dst = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
-    if (clear_backdrop) {
+    if (sub && PpuObjRemovedOnLine(ppu, (int)y - 1)) {
+      // Removed sprites stay on the subscreen where the main screen (drawn
+      // first) hides them: there the console adds them through color math.
+      // Where they would show on the main screen the host draws them.
+      const PpuZbufType *all =
+          ppu->objSubBuffer.data + left + kPpuExtraLeftRight;
+      const PpuZbufType *main =
+          ppu->bgBuffers[0].data + left + kPpuExtraLeftRight;
+      for (int i = 0; i < width; i++) {
+        const PpuZbufType pixel = all[i] > main[i] ? src[i] : all[i];
+        if (clear_backdrop || pixel > dst[i])
+          dst[i] = pixel;
+      }
+    } else if (clear_backdrop) {
       memcpy(dst, src, width * sizeof(uint16));
     } else {
       do {
@@ -1954,6 +1970,13 @@ static uint32 PpuOverlayColor(Ppu *ppu, PpuZbufType pixel) {
       (uint32)ppu->brightnessMult[color & 0x1f] << 16 |
       (uint32)ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |
       ppu->brightnessMult[(color >> 10) & 0x1f];
+}
+
+// Whether an OBJ capture takes sprites off this line's main screen.
+static bool PpuObjRemovedOnLine(Ppu *ppu, int screen_y) {
+  return PpuOverlayActiveOnLine(ppu, kPpuOverlaySource_Obj, screen_y) &&
+         (ppu->overlayCaptures[kPpuOverlaySource_Obj].flags &
+          kPpuOverlayFlag_RemoveFromGame) != 0;
 }
 
 static void PpuClearOverlayRenderLine(Ppu *ppu, uint y) {
@@ -2398,8 +2421,10 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
                      (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
             uint16 *addr = &ppu->vram[(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff];
             uint32 plane = addr[0] | addr[8] << 16;
-            int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);
-            int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
+            // Only the columns this line shows: a bounded (centered) screen
+            // shows no margin, so its sprites must not reach the captures.
+            int px_left = IntMax(-(col + x + left_extra), 0);
+            int px_right = IntMin(256 + right_extra - (col + x), 8);
             PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuExtraLeftRight;
             int slot = index >> 1;
             PpuOverlayCapture *obj_capture =
@@ -2410,6 +2435,10 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
                 slot < obj_capture->oamFirst + obj_capture->oamCount;
             bool obj_remove = capture_slot &&
                 (obj_capture->flags & kPpuOverlayFlag_RemoveFromGame) != 0;
+            PpuZbufType *sub_dst =
+                PpuObjRemovedOnLine(ppu, line)
+                    ? ppu->objSubBuffer.data + (dst - ppu->objBuffer.data)
+                    : NULL;
 
             for (int px = px_left; px < px_right; px++, dst++) {
               int shift = oam1 & 0x4000 ? px : 7 - px;
@@ -2417,6 +2446,8 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         int pixel = (bits >> 0) & 1 | (bits >> 7) & 2 |
                     (bits >> 14) & 4 | (bits >> 21) & 8;
         if (pixel == 0) continue;
+              if (sub_dst)
+                sub_dst[px - px_left] = z + pixel;
               if (capture_slot) {
                 int screen_x = col + x + px;
                 if (screen_x >= obj_capture->x0 && screen_x < obj_capture->x1) {

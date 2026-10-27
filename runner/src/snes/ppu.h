@@ -267,6 +267,10 @@ struct Ppu {
   uint32_t renderFlags;
   PpuPixelPrioBufs bgBuffers[2];
   PpuPixelPrioBufs objBuffer;
+  /* Every sprite pixel of the line, removed ones included: the subscreen
+   * keeps a removed sprite where the main screen hides it, so color math
+   * still adds it there. */
+  PpuPixelPrioBufs objSubBuffer;
   /* Per-source isolated priority pixels for generic host-overlay captures. */
   PpuPixelPrioBufs overlayBuffers[kPpuOverlaySource_Count];
   PpuOverlayCapture overlayCaptures[kPpuOverlaySource_Count];

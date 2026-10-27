@@ -717,6 +717,75 @@ int main(void) {
         PpuSetWidescreenPresentationXBias(ppu, 0);
     }
 
+    /* An OBJ capture with RemoveFromGame takes sprites off the main screen
+     * only. A sprite the main screen hides (BG1 in front) still reaches the
+     * subscreen, so color math keeps adding it; a sprite the main screen
+     * would show leaves no copy there; and a centered screen, which shows
+     * no margin, exports no sprite pixels in it. */
+    {
+        enum { kExtra = 8, kWidePixels = kPpuXPixels + kExtra * 2 };
+        uint32_t wide_pixels[kWidePixels];
+        uint32_t captured[kWidePixels];
+        for (int scenario = 0; scenario < 3; scenario++) {
+            ppu_reset(ppu);
+            memset(wide_pixels, 0, sizeof wide_pixels);
+            memset(captured, 0, sizeof captured);
+            PpuBeginDrawing(ppu, (uint8_t *)wide_pixels,
+                            sizeof(uint32_t) * kWidePixels,
+                            kPpuRenderFlags_NewRenderer);
+            if (scenario == 2)
+                PpuSetExtraSpaceCentered(ppu, kExtra);
+            else
+                PpuSetExtraSpace(ppu, kExtra);
+            PpuBindOverlaySurface(ppu, kPpuOverlaySource_Obj,
+                                  (uint8_t *)captured,
+                                  sizeof(uint32_t) * kWidePixels);
+            PpuSetOverlayCapture(ppu, kPpuOverlaySource_Obj, -kExtra, 0,
+                                 kWidePixels, 224,
+                                 kPpuOverlayFlag_RemoveFromGame);
+            PpuSetOverlayOamRange(ppu, 0, 128);
+            ppu->inidisp = 0x0f;
+            ppu->bgmode = 1;
+            /* Main: BG1 (priority 1 over the priority-0 sprite) and OBJ, or
+             * OBJ alone; sub: OBJ; add the subscreen to BG1 and backdrop. */
+            ppu->screenEnabled[0] = scenario == 0 ? 0x11 : 0x10;
+            ppu->screenEnabled[1] = 0x10;
+            ppu->cgwsel = 0x02;
+            ppu->cgadsub = 0x21;
+            for (int slot = 0; slot < 128; slot++)
+                ppu->oam[slot * 2] = 0xf000;
+            /* Slot 0: 8x8 at x 4 (x -4 for the margin scenario). */
+            ppu->oam[0] = scenario == 2 ? 0x00fc : 0x0004;
+            if (scenario == 2) ppu->highOam[0] |= 1;
+            for (size_t i = 0; i < sizeof ppu->vram / sizeof ppu->vram[0]; i++)
+                ppu->vram[i] = 0xffff;
+            memset(ppu->cgram, 0, sizeof ppu->cgram);
+            ppu->cgram[7 * 16 + 15] = 0x0010;  /* BG1: red 16 */
+            ppu->cgram[0x80 + 15] = 0x0200;    /* sprite: green 16 */
+
+            ppu_runLine(ppu, 0);
+            ppu_runLine(ppu, 1);
+            const uint32_t sprite_pixel = wide_pixels[kExtra + 4];
+            const unsigned green = (sprite_pixel >> 8) & 0xff;
+            if (scenario == 0) {
+                failures += check(green != 0 && captured[kExtra + 4] != 0,
+                                  "removed sprite hidden on the main screen "
+                                  "still adds through the subscreen");
+            } else if (scenario == 1) {
+                failures += check(green == 0 && captured[kExtra + 4] != 0,
+                                  "removed sprite shown on the main screen "
+                                  "leaves no subscreen copy");
+            } else {
+                failures += check(captured[kExtra - 4] == 0 &&
+                                      captured[kExtra - 1] == 0 &&
+                                      captured[kExtra] != 0,
+                                  "centered screen exports no sprite pixels "
+                                  "in its margin");
+            }
+        }
+        PpuClearOverlayBindings(ppu);
+    }
+
     ppu_free(ppu);
     if (failures) return 1;
     puts("ppu_sprite_limit_test: PASS");
