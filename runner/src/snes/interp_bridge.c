@@ -83,6 +83,15 @@ static void bridge_apu_flush(CpuState *cpu) {
     RtlApuUnlock();
     s_apu_pending_master = 0;
 }
+/* Diagnostic switches, read once: getenv scans the environment, and these
+ * checks sit on the bus and dispatch paths. */
+static int s_env_apu_port_diag = -1, s_env_wlog_state = -1,
+           s_env_yield_diag = -1, s_env_yield_stack_diag = -1;
+static bool bridge_env_flag(int *cache, const char *name) {
+    if (*cache < 0) *cache = getenv(name) != NULL;
+    return *cache != 0;
+}
+
 static int bridge_is_apu_port(uint32_t adr) {
     uint16_t a = (uint16_t)(adr & 0xFFFF);
     if (a < 0x2140 || a > 0x217F) return 0;
@@ -161,7 +170,7 @@ static void bridge_bus_write(void *mem, uint32_t adr, uint8_t val) {
     bridge_timing_bus(adr);
     g_interp_bridge_write_epoch++;
     CpuState *cpu = (CpuState *)mem;
-    if (getenv("SNESRECOMP_APU_PORT_DIAG") && bridge_is_apu_port(adr)) {
+    if (bridge_env_flag(&s_env_apu_port_diag, "SNESRECOMP_APU_PORT_DIAG") && bridge_is_apu_port(adr)) {
         static unsigned reports;
         if(reports++<256) fprintf(stderr,"[apu_port] write $%04X=%02X master=%llu\n",
           (unsigned)(uint16_t)adr,val,(unsigned long long)cpu->master_cycles);
@@ -200,7 +209,7 @@ static bool bridge_bus_read_word(void *mem, uint32_t adrl, uint32_t adrh,
     CpuState *cpu = (CpuState *)mem;
     if (bridge_is_apu_port(adrl)) bridge_apu_flush(cpu);
     *out = cpu_read16(cpu, (uint8)((adrl >> 16) & 0xFF), (uint16)(adrl & 0xFFFF));
-    if (getenv("SNESRECOMP_APU_PORT_DIAG") && (uint16_t)adrl == 0x2140) {
+    if (bridge_env_flag(&s_env_apu_port_diag, "SNESRECOMP_APU_PORT_DIAG") && (uint16_t)adrl == 0x2140) {
         static uint16_t last=0xffff; static unsigned reports;
         if (*out!=last && reports++<256) {
             fprintf(stderr,"[apu_port] read $2140=%04X pc-master=%llu pending=%llu\n",
@@ -229,7 +238,7 @@ static bool bridge_bus_write_word(void *mem, uint32_t adrl, uint32_t adrh,
     bridge_timing_bus(adrh);
     g_interp_bridge_write_epoch++;
     CpuState *cpu = (CpuState *)mem;
-    if (getenv("SNESRECOMP_APU_PORT_DIAG") && bridge_is_apu_port(adrl)) {
+    if (bridge_env_flag(&s_env_apu_port_diag, "SNESRECOMP_APU_PORT_DIAG") && bridge_is_apu_port(adrl)) {
         static unsigned reports;
         if(reports++<256) fprintf(stderr,"[apu_port] writew $%04X=%04X master=%llu\n",
           (unsigned)(uint16_t)adrl,val,(unsigned long long)cpu->master_cycles);
@@ -662,7 +671,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     in.read_word = bridge_bus_read_word;
     in.write_word = bridge_bus_write_word;
     in.brkHookEnabled = true;
-    const int wlog_state_sync = getenv("SNESRECOMP_WLOG_STATE") != NULL;
+    const int wlog_state_sync = bridge_env_flag(&s_env_wlog_state, "SNESRECOMP_WLOG_STATE");
 
     sync_cpu_to_interp(cpu, &in);
     in.k  = (uint8)((entry_pc24 >> 16) & 0xFF);
@@ -987,7 +996,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 in.mf = 1;
                 in.db = in.k;
             }
-            if (getenv("SNESRECOMP_YIELD_DIAG") &&
+            if (bridge_env_flag(&s_env_yield_diag, "SNESRECOMP_YIELD_DIAG") &&
                 _yield_flag != yield_flag_value && steps > 16) {
                 static int _yield_diag_n;
                 if (_yield_diag_n < 64) {
@@ -1285,7 +1294,7 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
                 if (_air != RECOMP_RETURN_NORMAL) {
                     if (s_lle_unwind_active) {
                         if (s_lle_unwind_owner_depth == s_interp_bridge_depth) {
-                            if (getenv("SNESRECOMP_YIELD_STACK_DIAG") &&
+                            if (bridge_env_flag(&s_env_yield_stack_diag, "SNESRECOMP_YIELD_STACK_DIAG") &&
                                 snes_frame_counter >= 5390) {
                                 fprintf(stderr,
                                         "[yield_stack] frame=%d bounce=$%06X "
