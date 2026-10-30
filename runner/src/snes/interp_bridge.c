@@ -732,6 +732,8 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
     long steps = 0;
     uint64_t progress_write_epoch=g_interp_bridge_write_epoch;
     uint64_t progress_dynamic_epoch=s_interp_dynamic_progress_epoch;
+    /* Epochs recorded by the previous step's qring entry; see the scan. */
+    uint64_t last_write_epoch=0, last_read_epoch=0;
     for (; steps < step_cap; steps++) {
         const uint32_t pc_before = ((uint32_t)in.k << 16) | in.pc;
 #if SNESRECOMP_REVERSE_DEBUG
@@ -782,7 +784,16 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
             now.d=in.d; now.mf=in.mf; now.xf=in.xf; now.e=in.e;
             now.write_epoch=g_interp_bridge_write_epoch; now.step=steps;
             now.continuous_read_epoch=s_interp_continuous_read_epoch;
-            for (unsigned qi=0; qi<64; qi++) {
+            /* Both epochs only increase, so once either moved since the
+             * previous step every older entry differs and the scan cannot
+             * match. Live MMIO polls (APU port handshakes) bump the read epoch
+             * on every iteration; skipping keeps them off the 64-entry scan. */
+            const int epochs_stable = steps &&
+                now.write_epoch==last_write_epoch &&
+                now.continuous_read_epoch==last_read_epoch;
+            last_write_epoch=now.write_epoch;
+            last_read_epoch=now.continuous_read_epoch;
+            for (unsigned qi=0; epochs_stable && qi<64; qi++) {
                 QuiescentState *old=&qring[qi];
                 if (old->step && steps-old->step<=64 &&
                     old->pc==now.pc && old->a==now.a && old->x==now.x &&
@@ -880,8 +891,12 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
          *   LDA abs; BMI/BPL -5
          *   BIT abs; BMI/BPL -5
          * while NMI/IRQ asynchronously changes bit 15. */
-        const uint8_t _poll_op = bridge_bus_read(cpu, pc_before);
-        const uint8_t _poll_branch = bridge_bus_read(cpu, pc_before + 3);
+        /* Only the cooperative-loop detectors below read these bytes. */
+        const int _poll_detect = yield_pc && !auto_quiescent;
+        const uint8_t _poll_op =
+            _poll_detect ? bridge_bus_read(cpu, pc_before) : 0;
+        const uint8_t _poll_branch =
+            _poll_detect ? bridge_bus_read(cpu, pc_before + 3) : 0;
         const uint16_t _poll_pc16 = (uint16_t)pc_before;
         const int _secondary_poll_pc =
             _poll_pc16 == 0xE02C || _poll_pc16 == 0xE06B ||
